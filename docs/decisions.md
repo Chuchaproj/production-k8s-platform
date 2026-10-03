@@ -19,3 +19,5 @@ API and monitoring pod templates carry the Helm release revision, so upgrades/ro
 The default kind cluster is one node so it can be validated on an 8 GB physical Mac with a 4 GB Docker VM. The optional three-node profile needs a larger host. API replication/PDB/HPA are demonstrated, but the final single-node run does not establish node-failure availability. All runtime suites must run sequentially; running both observability stacks alongside multi-node kind can exhaust the local host.
 
 Local Compose builds disable provenance attestations for kind image-archive compatibility with the Docker Desktop containerd store. This produces a single-platform lab image and is not a signed supply-chain workflow. A registry production pipeline should enable attestations and verify them rather than copying local archives.
+
+`make secrets` scans Git history, staged changes and an exported tracked source tree. Generated ignored local credentials are not publication content, but a forced/staged secret file is still inspected. There is no allowlist for credential-bearing .env paths.

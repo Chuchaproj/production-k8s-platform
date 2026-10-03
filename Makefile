@@ -24,3 +24,7 @@ recover:
 helm-check:
 	helm lint helm/platform
 	helm template platform helm/platform > /tmp/platform-rendered.yaml
+
+.PHONY: secrets
+secrets:
+	bash scripts/check-secrets.sh
