@@ -18,6 +18,7 @@ request = urllib.request.Request(base + "/items", data=json.dumps({"name": "smok
                                  headers={"Content-Type": "application/json"})
 with urllib.request.urlopen(request, timeout=5) as response:
     assert response.status == 201
+    created = json.load(response)
 with urllib.request.urlopen(base + "/items", timeout=5) as response:
-    assert any(item["name"] == "smoke" for item in json.load(response))
+    assert any(item["id"] == created["id"] and item["name"] == "smoke" for item in json.load(response))
 print("REST readiness, write and read passed")

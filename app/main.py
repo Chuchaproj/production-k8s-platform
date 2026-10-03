@@ -100,7 +100,7 @@ async def create_item(item: Item):
         raise HTTPException(503, "Database unavailable") from None
     # Invalidate cache after the transaction commits; reads use DB as source of truth.
     try:
-        await app.state.cache.delete("items")
+        await app.state.cache.incr("items:version")
     except Exception:
         failures.labels("redis").inc()
         logger.warning('cache_invalidation_failed')
@@ -114,7 +114,13 @@ async def list_items():
         await asyncio.sleep(min(delay, 10))
     # Redis is a required dependency in this lab so its outage is observable as 503.
     try:
-        await app.state.cache.ping()
+        version = await app.state.cache.get("items:version") or b"0"
+        if isinstance(version, bytes):
+            version = version.decode()
+        cache_key = f"items:{version}"
+        cached = await app.state.cache.get(cache_key)
+        if cached:
+            return json.loads(cached)
     except Exception:
         failures.labels("redis").inc()
         raise HTTPException(503, "Cache unavailable") from None
@@ -125,7 +131,13 @@ async def list_items():
     except Exception:
         failures.labels("postgres").inc()
         raise HTTPException(503, "Database unavailable") from None
-    return [{"id": row[0], "name": row[1]} for row in rows]
+    result = [{"id": row[0], "name": row[1]} for row in rows]
+    try:
+        await app.state.cache.setex(cache_key, 5, json.dumps(result))
+    except Exception:
+        failures.labels("redis").inc()
+        logger.warning("cache_fill_failed")
+    return result
 
 
 @app.websocket("/ws")

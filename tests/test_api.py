@@ -23,7 +23,8 @@ class Pool:
 @pytest.fixture
 def client():
     app.state.pool = Pool()
-    app.state.cache = SimpleNamespace(ping=AsyncMock(), delete=AsyncMock())
+    app.state.cache = SimpleNamespace(ping=AsyncMock(), get=AsyncMock(return_value=None),
+                                      incr=AsyncMock(return_value=1), setex=AsyncMock())
     return TestClient(app)
 
 
@@ -36,6 +37,7 @@ def test_rest_and_validation(client):
 
 def test_outage_keeps_liveness(client):
     app.state.cache.ping.side_effect = ConnectionError()
+    app.state.cache.get.side_effect = ConnectionError()
     assert client.get("/items").status_code == 503
     assert client.get("/ready").status_code == 503
     assert client.get("/live").status_code == 200
@@ -46,3 +48,11 @@ def test_websocket(client):
     with client.websocket_connect("/ws") as ws:
         ws.send_text("hello")
         assert ws.receive_json() == {"echo": "hello"}
+
+
+def test_versioned_cache_and_write_invalidation(client):
+    app.state.cache.get.side_effect = [b"4", b'[{"id":9,"name":"cached"}]']
+    assert client.get("/items").json() == [{"id": 9, "name": "cached"}]
+    assert app.state.cache.setex.await_count == 0
+    assert client.post("/items", json={"name": "new"}).status_code == 201
+    app.state.cache.incr.assert_awaited_once_with("items:version")
