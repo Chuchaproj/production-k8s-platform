@@ -33,4 +33,4 @@ secrets:
 manifests:
 	helm template platform helm/platform --namespace platform > k8s/platform.yaml
 manifests-check:
-	helm template platform helm/platform --namespace platform | diff -u k8s/platform.yaml -
+	.venv/bin/python scripts/check-manifests.py
