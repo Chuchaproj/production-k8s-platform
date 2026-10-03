@@ -1,5 +1,11 @@
 # Local validation — production-k8s-platform
 
+## Final portfolio audit
+
+The final audit rebuilt the documented custom image tag, reran application tests and applicable linters, and ran Trivy with all detected severities. [SECURITY.md](SECURITY.md) supersedes the previous image snapshot. Local Git history is preserved with additional normal commits. No publication or hosted workflow run occurred.
+
+Current source, staged files and history were scanned. Local ignored generated `.env` files were scanned separately: two credential detections in the Kubernetes lab, three in the SRE lab; the IaC service has no credential `.env`. Credentials remain private, ignored and mode 0600; their values are not included in any report. Publication/source scans reported no leaks.
+
 ## Observed results
 
 | Check | Result | Evidence / scope |
@@ -47,9 +53,11 @@ Date: 2026-10-03. Host: macOS, 8 GiB physical RAM; Docker Desktop Linux VM appro
 
 - PASS: Gitleaks scanned local Git history, staged changes and the tracked publication tree. No finding was reported. This is a detector result, not proof that every possible secret is absent.
 - PASS: `.env`, environment variants, virtual environments, generated artifacts and private key files are ignored; `.env.example` is tracked. No local credential file is included in the publication tree.
-- EXECUTED WITH FINDINGS: custom runtime image Trivy scan reported 44 HIGH, 60 MEDIUM, 60 LOW and 2 UNKNOWN findings; zero CRITICAL. The HIGH findings have no fixed package version in the scan result. See [security report](docs/security-scan.md). Third-party stack images and exploitability were not audited. The CI vulnerability scan reports findings without blocking; secret scanning blocks.
+- PASS WITH SCOPE LIMITS: the final Alpine custom runtime scan reports zero detected vulnerabilities. The previous Debian image had 44 HIGH; the audit investigates every unique CVE and removes affected base packages without suppressions. See [security report](docs/security-scan.md). Third-party stack images and exploitability were not audited. The CI custom-runtime vulnerability gate blocks HIGH/CRITICAL; secret scanning also blocks.
 - PASS: actionlint and YAML lint checked workflow syntax. GitHub Actions execution, environment protection and CI status badges are **NOT TESTED** because the repository has not been published. No badge asserts a successful remote check.
 
 ## Recheck
 
 Run `make install test lint secrets` in a clean checkout with the prerequisites from README. Generate local credentials where required; do not copy someone else's `.env`. Follow README deployment and cleanup commands one project at a time. Image findings and dependency versions are a dated snapshot; refresh scans before publication or wider use.
+
+Final runtime recheck: rebuilt Alpine Compose REST/WS and Redis recovery; Grafana shared payload read-back; smoke passed with more than 100 rows. Fresh kind install, shared telemetry configuration, Traefik REST/WS, PostgreSQL pod replacement, both backend scrape targets, Redis recovery, HPA CPU (17% / 70%, two replicas), upgrade/rollback and server dry-run all passed. Cold startup initially restarted API pods while PostgreSQL was still unavailable; rollout converged and final application checks passed. Generated manifests match the chart. Multi-host failover remains NOT TESTED.

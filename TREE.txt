@@ -13,6 +13,7 @@ production-k8s-platform/
 ├── Makefile
 ├── README.md
 ├── RUNBOOK.md
+├── SECURITY.md
 ├── TREE.txt
 ├── VALIDATION.md
 ├── app/
@@ -21,10 +22,16 @@ production-k8s-platform/
 ├── compose.yaml
 ├── docs/
 │   ├── decisions.md
+│   ├── security-evidence.json
 │   └── security-scan.md
 ├── helm/
 │   └── platform/
 │       ├── Chart.yaml
+│       ├── files/
+│       │   ├── alertmanager.yml
+│       │   ├── alerts.yml
+│       │   ├── loki.yml
+│       │   └── platform.json
 │       ├── templates/
 │       │   ├── app.yaml
 │       │   ├── monitoring.yaml
@@ -37,16 +44,12 @@ production-k8s-platform/
 │   ├── kind.yaml
 │   └── platform.yaml
 ├── monitoring/
-│   ├── alertmanager.yml
-│   ├── alerts.yml
 │   ├── config.alloy
 │   ├── grafana/
 │   │   ├── dashboards/
-│   │   │   ├── platform.json
 │   │   │   └── provider.yml
 │   │   └── datasources/
 │   │       └── sources.yml
-│   ├── loki.yml
 │   ├── prometheus.yml
 │   └── rule-tests.yml
 ├── nginx/
