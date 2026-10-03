@@ -11,3 +11,5 @@ hpa:
   maxReplicas: 4
 monitoring:
   enabled: true
+secrets:
+  create: false
