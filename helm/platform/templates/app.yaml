@@ -20,6 +20,8 @@ spec:
     matchLabels: {app: '{{ .Release.Name }}-backend'}
   template:
     metadata:
+      annotations:
+        platform.homelab/release-revision: "{{ .Release.Revision }}"
       labels: {app: '{{ .Release.Name }}-backend'}
     spec:
       automountServiceAccountToken: false

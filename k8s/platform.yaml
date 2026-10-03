@@ -547,6 +547,8 @@ spec:
     matchLabels: {app: 'platform-backend'}
   template:
     metadata:
+      annotations:
+        platform.homelab/release-revision: "1"
       labels: {app: 'platform-backend'}
     spec:
       automountServiceAccountToken: false
@@ -625,6 +627,8 @@ spec:
     matchLabels: {app: 'platform-prometheus'}
   template:
     metadata:
+      annotations:
+        platform.homelab/release-revision: "1"
       labels: {app: 'platform-prometheus'}
     spec:
       serviceAccountName: platform-prometheus
@@ -655,6 +659,8 @@ spec:
     matchLabels: {app: 'platform-alertmanager'}
   template:
     metadata:
+      annotations:
+        platform.homelab/release-revision: "1"
       labels: {app: 'platform-alertmanager'}
     spec:
       automountServiceAccountToken: false
@@ -685,6 +691,8 @@ spec:
     matchLabels: {app: 'platform-loki'}
   template:
     metadata:
+      annotations:
+        platform.homelab/release-revision: "1"
       labels: {app: 'platform-loki'}
     spec:
       automountServiceAccountToken: false
@@ -714,6 +722,8 @@ spec:
     matchLabels: {app: 'platform-grafana'}
   template:
     metadata:
+      annotations:
+        platform.homelab/release-revision: "1"
       labels: {app: 'platform-grafana'}
     spec:
       automountServiceAccountToken: false

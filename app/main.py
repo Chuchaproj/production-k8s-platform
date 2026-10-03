@@ -36,6 +36,7 @@ async def lifespan(app):
     try:
         await pool.wait(timeout=30)
         async with pool.connection() as conn:
+            await conn.execute("SELECT pg_advisory_xact_lock(42810)")
             await conn.execute("CREATE TABLE IF NOT EXISTS items (id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL)")
         yield
     finally:

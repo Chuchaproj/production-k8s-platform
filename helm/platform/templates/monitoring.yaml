@@ -84,6 +84,8 @@ spec:
     matchLabels: {app: '{{ .Release.Name }}-prometheus'}
   template:
     metadata:
+      annotations:
+        platform.homelab/release-revision: "{{ .Release.Revision }}"
       labels: {app: '{{ .Release.Name }}-prometheus'}
     spec:
       serviceAccountName: {{ .Release.Name }}-prometheus
@@ -143,6 +145,8 @@ spec:
     matchLabels: {app: '{{ .Release.Name }}-alertmanager'}
   template:
     metadata:
+      annotations:
+        platform.homelab/release-revision: "{{ .Release.Revision }}"
       labels: {app: '{{ .Release.Name }}-alertmanager'}
     spec:
       automountServiceAccountToken: false
@@ -222,6 +226,8 @@ spec:
     matchLabels: {app: '{{ .Release.Name }}-loki'}
   template:
     metadata:
+      annotations:
+        platform.homelab/release-revision: "{{ .Release.Revision }}"
       labels: {app: '{{ .Release.Name }}-loki'}
     spec:
       automountServiceAccountToken: false
@@ -548,6 +554,8 @@ spec:
     matchLabels: {app: '{{ .Release.Name }}-grafana'}
   template:
     metadata:
+      annotations:
+        platform.homelab/release-revision: "{{ .Release.Revision }}"
       labels: {app: '{{ .Release.Name }}-grafana'}
     spec:
       automountServiceAccountToken: false

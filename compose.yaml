@@ -4,7 +4,7 @@ services:
     command: [chown, '10001:10001', /logs]
     volumes: [app-logs:/logs]
   backend:
-    build: .
+    build: {context: ., provenance: false}
     image: platform-backend:local
     environment:
       DATABASE_URL: postgresql://platform:${POSTGRES_PASSWORD:?Run make init}@postgres:5432/platform
