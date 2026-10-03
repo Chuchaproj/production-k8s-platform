@@ -45,7 +45,7 @@ data:
         kubernetes_sd_configs:
           - role: endpoints
             namespaces:
-              names: ['default']
+              names: ['platform']
         relabel_configs:
           - source_labels: [__meta_kubernetes_service_name]
             regex: 'platform-backend'
@@ -110,7 +110,6 @@ data:
     receivers:
       - name: local-ui
 
-
 ---
 # Source: platform/templates/monitoring.yaml
 apiVersion: v1
@@ -147,7 +146,6 @@ data:
       working_directory: /loki/compactor
       retention_enabled: true
       delete_request_store: filesystem
-
 
 ---
 # Source: platform/templates/monitoring.yaml

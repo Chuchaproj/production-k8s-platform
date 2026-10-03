@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 import os
@@ -110,9 +109,6 @@ async def create_item(item: Item):
 
 @app.get("/items")
 async def list_items():
-    delay = float(os.getenv("LAB_LATENCY_SECONDS", "0"))
-    if delay:
-        await asyncio.sleep(min(delay, 10))
     # Redis is a required dependency in this lab so its outage is observable as 503.
     try:
         version = await app.state.cache.get("items:version") or b"0"
@@ -127,7 +123,7 @@ async def list_items():
         raise HTTPException(503, "Cache unavailable") from None
     try:
         async with app.state.pool.connection() as conn:
-            cursor = await conn.execute("SELECT id, name FROM items ORDER BY id LIMIT 100")
+            cursor = await conn.execute("SELECT id, name FROM items ORDER BY id DESC LIMIT 100")
             rows = await cursor.fetchall()
     except Exception:
         failures.labels("postgres").inc()

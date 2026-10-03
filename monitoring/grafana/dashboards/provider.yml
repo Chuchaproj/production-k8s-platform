@@ -3,4 +3,4 @@ providers:
   - name: homelab
     type: file
     options:
-      path: /etc/grafana/provisioning/dashboards
+      path: /opt/dashboards

@@ -9,7 +9,7 @@ test:
 lint:
 	.venv/bin/ruff check app tests scripts
 	shellcheck scripts/*.sh
-	yamllint -c .yamllint compose.yaml monitoring .github
+	yamllint -c .yamllint compose.yaml monitoring helm/platform/files .github
 	hadolint Dockerfile
 up:
 	docker compose up -d --build --wait --wait-timeout 180
@@ -28,3 +28,9 @@ helm-check:
 .PHONY: secrets
 secrets:
 	bash scripts/check-secrets.sh
+
+.PHONY: manifests manifests-check
+manifests:
+	helm template platform helm/platform --namespace platform > k8s/platform.yaml
+manifests-check:
+	helm template platform helm/platform --namespace platform | diff -u k8s/platform.yaml -
