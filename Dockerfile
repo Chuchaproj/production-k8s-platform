@@ -1,9 +1,13 @@
-FROM python:3.11-slim-trixie@sha256:bab1b7ef4b450c81002278d035eff85ebe394ae94df904f7a3ba14f7e16e487b
-RUN apt-get update && apt-get install --yes --no-install-recommends libpcre2-8-0=10.46-1~deb13u3 && rm -rf /var/lib/apt/lists/*
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
-WORKDIR /srv
+FROM python:3.11-alpine3.24@sha256:f2cdc43fcddbabe870f53750cbdcc01ae4aa75b1959351252457fde88f91d20f AS dependencies
+WORKDIR /build
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt && pip uninstall --yes pip setuptools wheel && useradd --uid 10001 --create-home app
+RUN python -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir --only-binary=:all: -r requirements.txt && /opt/venv/bin/pip uninstall --yes pip setuptools wheel
+
+FROM python:3.11-alpine3.24@sha256:f2cdc43fcddbabe870f53750cbdcc01ae4aa75b1959351252457fde88f91d20f AS runtime
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PATH="/opt/venv/bin:$PATH"
+RUN pip uninstall --yes pip setuptools wheel && addgroup -g 10001 app && adduser -D -u 10001 -G app app
+WORKDIR /srv
+COPY --from=dependencies /opt/venv /opt/venv
 COPY --chown=10001:10001 app ./app
 USER 10001
 EXPOSE 8000
