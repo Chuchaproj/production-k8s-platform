@@ -21,7 +21,7 @@ jobs:
       - run: make init up smoke
       - run: docker compose run --rm --no-deps --entrypoint promtool prometheus check config /etc/prometheus/prometheus.yml
       - run: docker compose run --rm --no-deps --entrypoint promtool prometheus test rules /etc/prometheus/rule-tests.yml
-      - name: Image security report
+      - name: Image vulnerability gate
         uses: aquasecurity/trivy-action@0.30.0
         with:
           image-ref: platform-backend:local
