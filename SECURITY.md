@@ -26,7 +26,7 @@ The 44 previous HIGH package/CVE records represent eight unique CVEs, all origin
 
 ## Changes and trade-offs
 
-The Python base is pinned to `python:3.11-alpine3.24@sha256:f2cdc43fcddbabe870f53750cbdcc01ae4aa75b1959351252457fde88f91d20f`. The container runs UID 10001. Python package installers/build tooling are removed after use. API repositories use a separate dependency stage and require binary wheels, then copy only the virtual environment and application. The stdlib-only IaC service does not need a dependency stage. No compiler or Linux login/mount administration stack was added.
+The Python base is pinned to `python:3.11-alpine3.24@sha256:f2cdc43fcddbabe870f53750cbdcc01ae4aa75b1959351252457fde88f91d20f`. The container runs UID 10001. Python package installers/build tooling are removed after use. A separate dependency stage requires binary wheels and copies only the virtual environment and application into the runtime image. No compiler or Linux login/mount administration stack was added.
 
 Alpine uses musl rather than glibc. Dependency upgrades must be checked for matching wheels and real DB/network operation. Local builds and runtime checks cover arm64; amd64 hosted CI execution remains NOT TESTED. No claim of universal ABI compatibility is made.
 
@@ -36,15 +36,14 @@ None were reported in the scanned new custom runtime image. There are therefore 
 
 ## Security boundaries and unresolved risks
 
-- These are trusted, loopback/private homelabs. Public API authentication, TLS and production authorization are absent. Do not expose them directly.
-- Generated local `.env` credentials are intentionally secret, mode 0600 and ignored. Explicit local .env scans found two generated secrets in project 1 and three in project 3; the IaC service has no credential .env. These files are ignored and mode 0600. Their presence is not a public leak; history and publication files are scanned separately. Values are never printed or committed. Never attach secret-bearing configuration dumps to issues.
+- This is a trusted, loopback/private homelab. Public API authentication, TLS and production authorization are absent. Do not expose it directly.
+- Generated local `.env` credentials are mode 0600 and ignored. A separate local scan detected two expected credentials in that private file. Tracked sources and history were scanned separately without detected leaks. Values are never printed or committed. Never attach secret-bearing configuration dumps to issues.
 - PostgreSQL uses a privileged lab initialization role; create a restricted application/monitoring role before wider use.
 - Singleton databases and monitoring lack HA and tested disaster recovery. Kubernetes Secrets are not encrypted merely because their representation is base64.
-- SRE cAdvisor mounts privileged host paths and the Docker socket; a read-only socket mount does not restrict Docker API permissions. Only a trusted lab host is appropriate.
 - Third-party stack images, host/kernel, developer tooling, CI action dependencies and dependency exploitability were not exhaustively audited. Zero findings in the backend image is not a zero-vulnerability result for the whole stack.
 
 ## Reproduce and CI
 
-Build the documented local image with `make up` (or `make build` for the IaC project). Run `trivy image --severity HIGH,CRITICAL --exit-code 1 IMAGE_TAG` using the exact image you just built. Use `trivy image --format json IMAGE_TAG` for all-severity evidence. CI now blocks HIGH/CRITICAL custom runtime findings and scans secrets with the default Gitleaks rules; it needs no manually configured credential for basic validation. GitHub supplies its automatic GITHUB_TOKEN. Production environment reviewer settings and hosted execution are pending publication.
+Build the documented local image with `make up`. Run `trivy image --severity HIGH,CRITICAL --exit-code 1 IMAGE_TAG` using the exact image you just built. Use `trivy image --format json IMAGE_TAG` for all-severity evidence. CI now blocks HIGH/CRITICAL custom runtime findings and scans secrets with the default Gitleaks rules; it needs no manually configured credential for basic validation. GitHub supplies its automatic GITHUB_TOKEN. Hosted execution remains NOT TESTED.
 
 The normalized [scan evidence](docs/security-evidence.json) records image identities, package/CVE/version/fix/origin and all reported severities. Raw scan artifacts were kept locally outside Git.

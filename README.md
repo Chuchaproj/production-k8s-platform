@@ -1,8 +1,14 @@
 # production-k8s-platform
 
-Production-like homelab / portfolio project created to practice and demonstrate DevOps/SRE engineering patterns. It is not presented as commercial production experience.
+A Python REST/WebSocket service with PostgreSQL, Redis, dependency-aware health checks, Helm deployment and an observability stack.
 
-A Python API with stateful dependencies, explicit health semantics, rolling releases and an observable Redis failure. All services run locally without a cloud account. See [VALIDATION.md](VALIDATION.md) for measured validation status, not performance claims.
+> Personal production-like homelab. This repository is not presented as commercial production infrastructure.
+
+## What this project demonstrates
+
+This project demonstrates dependency-aware probes, bounded failure, safe SQL, WebSocket reverse proxying, service discovery, persistent state, rolling deployment, rollback boundaries, basic monitoring and incident reasoning.
+
+## Architecture
 
 ```mermaid
 flowchart LR
@@ -17,9 +23,13 @@ flowchart LR
   logs --> grafana
 ```
 
-## Requirements and quick start
+## Stack
 
-Docker Engine with Compose, Python 3.11, Make. Allow approximately 4 GB of Docker memory for Compose. Kubernetes adds kubectl, Helm 3 or 4, kind, a default StorageClass and optional metrics-server/Ingress controller. The default kind profile uses one node and is intended for a 4 GB Docker VM with other labs stopped. `k8s/kind-ha.yaml` provides a three-node layout for a host with at least 8 GB Docker memory; it is not the default on an 8 GB physical Mac. Use a dedicated cluster; never run incident commands against an employer cluster.
+Python / FastAPI, PostgreSQL, Redis, Nginx (Compose), Kubernetes / kind, Helm, Traefik, Prometheus, Grafana, Loki, Alloy and Alertmanager.
+
+## Quick start
+
+Docker Engine with Compose, Python 3.11, Make. Allow approximately 4 GB of Docker memory for Compose. Kubernetes adds kubectl, Helm 3 or 4, kind, a default StorageClass and optional metrics-server/Ingress controller. The default kind profile uses one node and is intended for a 4 GB Docker VM with other large workloads stopped. `k8s/kind-ha.yaml` provides a three-node layout for a host with at least 8 GB Docker memory; it is not the default on an 8 GB physical Mac. Use a dedicated cluster; never run incident commands against an unrelated infrastructure.
 
 ```bash
 make init
@@ -33,6 +43,8 @@ curl http://127.0.0.1:8280/items
 
 ## Kubernetes deployment
 
+The following sequence uses the backend image built by the Compose quick start above. Run port-forward commands in a separate terminal and stop them before cleanup.
+
 ```bash
 # Stop Compose to release ports and memory before creating kind.
 make down
@@ -44,7 +56,7 @@ helm --kube-context kind-portfolio install platform helm/platform --namespace pl
 kubectl --context kind-portfolio -n platform port-forward service/platform-backend 8280:8000
 ```
 
-The default chart uses the external Secret created by the helper. An optional `templates/secret.yaml` supports CI-managed creation with `secrets.create=true` and required `postgresPassword`, `grafanaPassword`, `databaseUrl` fields under `secrets`, supplied via an ignored mode-0600 values file from protected CI variables. Do not put secret values in CLI arguments or Git. Helm stores those values in release Secrets, so restrict their access. Choose the helper or chart creation, never both. The secret helper creates once and refuses an existing Secret; changing a Postgres Secret alone does not rotate a persisted DB password. The raw manifest is generated with `make manifests`; `make manifests-check` detects chart drift. For raw manifests, use `kubectl --context kind-portfolio -n platform apply -f k8s/platform.yaml` after creating the same Secret. Raw manifests and Helm are alternative ownership modes: do not use both on the same resources.
+The default chart uses the external Secret created by the helper. An optional `helm/platform/templates/secret.yaml` supports CI-managed creation with `secrets.create=true` and required `postgresPassword`, `grafanaPassword`, `databaseUrl` fields under `secrets`, supplied via an ignored mode-0600 values file from protected CI variables. Do not put secret values in CLI arguments or Git. Helm stores those values in release Secrets, so restrict their access. Choose the helper or chart creation, never both. The secret helper creates once and refuses an existing Secret; changing a Postgres Secret alone does not rotate a persisted DB password. The raw manifest is generated with `make manifests`; `make manifests-check` detects chart drift. For raw manifests, use `kubectl --context kind-portfolio -n platform apply -f k8s/platform.yaml` after creating the same Secret. Raw manifests and Helm are alternative ownership modes: do not use both on the same resources.
 
 Port-forward is the verified local access path; the Ingress object requires the separately installed Traefik controller described below and host resolution for `platform.localhost`. HPA requires metrics-server; default chart values enable it, while kind quick start disables it. Two backend replicas, PDB minAvailable=1 and soft topology spreading tolerate a voluntary disruption of one API pod; single PostgreSQL/Redis and host storage do not provide data-tier HA. Startup allows DB initialization, readiness checks dependencies, and liveness does not restart healthy processes for external outages. Uvicorn drains requests within 20 seconds inside the 30-second pod termination window; long WebSocket sessions can disconnect and clients must reconnect.
 
@@ -84,11 +96,15 @@ kubectl --context kind-portfolio -n platform rollout status deployment/platform-
 
 Use unique image tags for meaningful upgrades and load them into kind before updating `image`. Chart revision 1 is the known baseline in this walkthrough. Image rollback cannot undo database writes or incompatible migrations. Schema initialization uses only `CREATE TABLE IF NOT EXISTS`; future migrations require expand/contract and a backup before destructive changes.
 
-## Monitoring and incident drill
+## Observability
 
 After Kubernetes exercises, stop port-forward processes and delete only the disposable cluster with `kind delete cluster --name portfolio`. Run `make up` again before the Compose incident below.
 
 The chart includes Prometheus, Alertmanager, Loki, per-pod Alloy and Grafana. Prometheus discovers every backend endpoint with namespace-scoped RBAC. Grafana config provisions the service dashboard and both data sources. Compose uses the same rules/configs. Alerts cover unavailable scrape target, server error fraction, p95 latency, dependency errors and process RSS. Alertmanager intentionally has no external delivery integration: inspect the UI; real notification credentials belong in CI variables/Secrets.
+
+Shared alerts, Loki/Alertmanager configuration and dashboard JSON live in `helm/platform/files` and are consumed by Helm and Compose. Service discovery and log-agent endpoints differ between runtimes and have separate configuration.
+
+## Failure scenario
 
 ```bash
 make incident
@@ -99,18 +115,22 @@ make smoke
 
 See [RUNBOOK.md](RUNBOOK.md) for diagnosis and recovery, and [docs/decisions.md](docs/decisions.md) for tradeoffs. Dashboards are empty until real traffic arrives; no synthetic benchmark claims are supplied.
 
-## Troubleshooting, security and limitations
+## Troubleshooting
 
 Run `docker compose ps`, `docker compose logs backend redis postgres`, or `kubectl --context kind-portfolio -n platform get pods,pvc,events`. A Pending PVC needs a StorageClass; ImagePullBackOff on kind needs `kind load`; HPA unknown metrics needs metrics-server. Readiness can fail while liveness remains healthy during the Redis incident.
 
+## Security and limitations
+
 The API runs as a non-root user with a read-only root filesystem, bounded resources and no service-account token. Only loopback ports are exposed by Compose. Database credentials never enter Git. The application uses the lab initialization PostgreSQL role, which is privileged; a production deployment needs a separate restricted application role. This is an isolated trusted lab: there is no API authentication, Redis authentication, TLS, NetworkPolicy, database replication or backup scheduler. Do not expose it publicly. For HTTPS use a real certificate Secret and TLS ingress configuration; do not mistake localhost HTTP for encrypted traffic. Prometheus/Loki admin surfaces are internal or port-forwarded. Single-instance monitoring and Grafana ephemeral Kubernetes storage are lab limitations. Alloy file tailing avoids Docker socket access but a pod deletion may lose unsent log lines.
 
-## What this project demonstrates
+## Validation
 
-This project demonstrates dependency-aware probes, bounded failure, safe SQL, WebSocket reverse proxying, service discovery, persistent state, rolling deployment, rollback boundaries, basic monitoring and incident reasoning.
+[VALIDATION.md](VALIDATION.md) records observed local results and NOT TESTED items. Run `make test lint secrets` for application tests, static checks and secret scanning. Hosted GitHub Actions execution has not been tested.
 
-See [local image security findings](docs/security-scan.md) and [publishable repository tree](TREE.txt).
+## Documentation
 
-Shared alerts, Loki/Alertmanager configuration and dashboard JSON live in `helm/platform/files` and are consumed by both Helm and Compose. Service discovery and log-agent endpoints differ between runtimes and have separate configuration.
-
-See [SECURITY.md](SECURITY.md) for the audited image scope and remaining security limitations.
+- [Validation results](VALIDATION.md)
+- [Security scope and remaining risks](SECURITY.md)
+- [Image scan summary](docs/security-scan.md)
+- [Architecture decisions](docs/decisions.md)
+- [Operational runbook](RUNBOOK.md)

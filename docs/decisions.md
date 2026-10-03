@@ -10,7 +10,7 @@
 
 Primary references: [probes](https://kubernetes.io/docs/concepts/workloads/pods/probes/), [histograms](https://prometheus.io/docs/practices/histograms/), [Loki/Alloy](https://grafana.com/docs/loki/latest/setup/install/docker/).
 
-The Kubernetes Ingress uses Traefik; Compose retains standalone Nginx. Community ingress-nginx retired in March 2026; do not install an unmaintained controller for this portfolio. See [Kubernetes statement](https://kubernetes.io/blog/2026/01/29/ingress-nginx-statement/).
+The Kubernetes Ingress uses Traefik; Compose retains standalone Nginx. Community ingress-nginx retired in March 2026; do not install an unmaintained controller for this cluster. See [Kubernetes statement](https://kubernetes.io/blog/2026/01/29/ingress-nginx-statement/).
 
 Schema bootstrap acquires a transaction-scoped PostgreSQL advisory lock before table creation, preventing concurrent replica DDL races. This is a minimal lab bootstrap, not a substitute for versioned production migrations.
 
@@ -20,7 +20,7 @@ The default kind cluster is one node so it can be validated on an 8 GB physical 
 
 Local Compose builds disable provenance attestations for kind image-archive compatibility with the Docker Desktop containerd store. This produces a single-platform lab image and is not a signed supply-chain workflow. A registry production pipeline should enable attestations and verify them rather than copying local archives.
 
-`make secrets` scans Git history, staged changes and the current tracked and nonignored source files. Generated ignored local credentials are not publication content, but a forced/staged secret file is still inspected. There is no allowlist for credential-bearing .env paths.
+`make secrets` scans Git history, staged changes and the current tracked and nonignored source files. Generated local credentials remain ignored; a forced/staged credential file is still inspected. There is no allowlist for credential-bearing .env paths.
 
 The runtime uses a digest-pinned Python 3.11 / Alpine 3.24 base. The API dependency stage installs binary musllinux wheels into a virtual environment; only that environment and application source enter the runtime. No compiler or pip/setuptools/wheel is retained. This removes unused Debian system utilities instead of suppressing their findings. The trade-off is musl compatibility: new dependencies must provide matching wheels or require an explicitly reviewed build stage. Native arm64 execution is checked locally; amd64 execution belongs to the first hosted CI run.
 

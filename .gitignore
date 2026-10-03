@@ -10,3 +10,11 @@ artifacts/
 secrets.yaml
 *.key
 *.pem
+.DS_Store
+.idea/
+.vscode/
+*.bak
+*.tmp
+*.orig
+*~
+*.log
