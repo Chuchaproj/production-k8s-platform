@@ -19,7 +19,7 @@ flowchart LR
 
 ## Requirements and quick start
 
-Docker Engine with Compose, Python 3.11, Make. Allow approximately 4 GB of Docker memory for Compose. Kubernetes adds kubectl, Helm 3 or 4, kind, a default StorageClass and optional metrics-server/Ingress controller. Use a dedicated cluster; never run incident commands against an employer cluster.
+Docker Engine with Compose, Python 3.11, Make. Allow approximately 4 GB of Docker memory for Compose. Kubernetes adds kubectl, Helm 3 or 4, kind, a default StorageClass and optional metrics-server/Ingress controller. The default kind profile uses one node and is intended for a 4 GB Docker VM with other labs stopped. `k8s/kind-ha.yaml` provides a three-node layout for a host with at least 8 GB Docker memory; it is not the default on an 8 GB physical Mac. Use a dedicated cluster; never run incident commands against an employer cluster.
 
 ```bash
 make init
