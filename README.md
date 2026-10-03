@@ -67,7 +67,7 @@ helm upgrade platform helm/platform -n platform --set hpa.enabled=true --wait
 kubectl -n platform get hpa
 ```
 
-The insecure kubelet certificate flag is for kind's local certificates only. A real cluster must use trusted kubelet certificates instead. The API client used for validation matches Kubernetes 1.37. Local cold image downloads can exceed five minutes; preload dependency images from the Compose run with `kind load docker-image` or increase the wait timeout before retrying the release.
+The insecure kubelet certificate flag is for kind's local certificates only. A real cluster must use trusted kubelet certificates instead. The API client used for validation matches Kubernetes 1.37. Local cold image downloads can exceed five minutes; increase the wait timeout before retrying the release. Load only the locally built backend image into kind; let the nodes pull dependency images normally. Docker Desktop containerd can reject imported multi-platform dependency archives.
 
 ## Helm releases and rollback
 
@@ -102,3 +102,5 @@ Run `docker compose ps`, `docker compose logs backend redis postgres`, or `kubec
 The API runs as a non-root user with a read-only root filesystem, bounded resources and no service-account token. Only loopback ports are exposed by Compose. Database credentials never enter Git. This is an isolated trusted lab: there is no API authentication, Redis authentication, TLS, NetworkPolicy, database replication or backup scheduler. Do not expose it publicly. For HTTPS use a real certificate Secret and TLS ingress configuration; do not mistake localhost HTTP for encrypted traffic. Prometheus/Loki admin surfaces are internal or port-forwarded. Single-instance monitoring and Grafana ephemeral Kubernetes storage are lab limitations. Alloy file tailing avoids Docker socket access but a pod deletion may lose unsent log lines.
 
 This project demonstrates dependency-aware probes, bounded failure, safe SQL, WebSocket reverse proxying, service discovery, persistent state, rolling deployment, rollback boundaries, basic monitoring and incident reasoning.
+
+See [local image security findings](docs/security-scan.md) and [publishable repository tree](TREE.txt).
