@@ -1,0 +1,5 @@
+[extend]
+useDefault = true
+[allowlist]
+description = "Generated local environments and installed dependencies; never publish these paths"
+paths = ['''(^|/)\.venv/''', '''(^|/)\.env$''', '''(^|/)artifacts/''', '''(^|/)\.terraform/''']

@@ -1,0 +1,13 @@
+image: platform-backend:local
+replicas: 2
+secretName: platform-secrets
+ingress:
+  enabled: true
+  className: traefik
+  host: platform.localhost
+hpa:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 4
+monitoring:
+  enabled: true

@@ -1,0 +1,854 @@
+---
+# Source: platform/templates/app.yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: platform-backend
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: 'platform-backend'}
+
+---
+# Source: platform/templates/monitoring.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: 'platform-prometheus'}
+
+---
+# Source: platform/templates/app.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-config
+data:
+  REDIS_URL: redis://platform-redis:6379/0
+
+---
+# Source: platform/templates/monitoring.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-prometheus
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+    rule_files: [/etc/prometheus/alerts.yml]
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets: ['platform-alertmanager:9093']
+    scrape_configs:
+      - job_name: backend
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names: ['default']
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            regex: 'platform-backend'
+            action: keep
+          - source_labels: [__meta_kubernetes_endpoint_port_name]
+            regex: http
+            action: keep
+      - job_name: prometheus
+        static_configs:
+          - targets: ['localhost:9090']
+
+  alerts.yml: |
+    groups:
+      - name: platform
+        rules:
+          - alert: BackendUnavailable
+            expr: up{job="backend"} == 0
+            for: 1m
+            labels: {severity: critical}
+            annotations: {summary: Backend metrics endpoint unavailable, runbook: RUNBOOK.md}
+          - alert: BackendErrorRate
+            expr: sum(rate(http_requests_total{status=~"5.."}[5m])) / clamp_min(sum(rate(http_requests_total[5m])), 0.001) > 0.05
+            for: 2m
+            labels: {severity: warning}
+            annotations: {summary: More than five percent server errors, runbook: RUNBOOK.md}
+          - alert: BackendLatency
+            expr: histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket[5m]))) > 0.5
+            for: 2m
+            labels: {severity: warning}
+            annotations: {summary: HTTP p95 exceeds 500ms, runbook: RUNBOOK.md}
+          - alert: BackendMemory
+            expr: process_resident_memory_bytes{job="backend"} > 200 * 1024 * 1024
+            for: 5m
+            labels: {severity: warning}
+            annotations: {summary: Backend memory above lab threshold, runbook: RUNBOOK.md}
+          - alert: DependencyFailure
+            expr: sum by (dependency) (rate(dependency_failures_total[2m])) > 0
+            for: 1m
+            labels: {severity: warning}
+            annotations: {summary: Required dependency failing, runbook: RUNBOOK.md}
+
+          - alert: BackendCpuHigh
+            expr: rate(process_cpu_seconds_total{job="backend"}[2m]) > 0.45
+            for: 2m
+            labels: {severity: warning}
+            annotations: {summary: Backend near half-core CPU budget, runbook: RUNBOOK.md}
+
+---
+# Source: platform/templates/monitoring.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-alertmanager
+data:
+  alertmanager.yml: |
+    route:
+      receiver: local-ui
+      group_by: [alertname]
+      group_wait: 10s
+      group_interval: 1m
+      repeat_interval: 4h
+    receivers:
+      - name: local-ui
+
+
+---
+# Source: platform/templates/monitoring.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-loki
+data:
+  loki.yml: |
+    auth_enabled: false
+    server:
+      http_listen_port: 3100
+    common:
+      path_prefix: /loki
+      replication_factor: 1
+      ring:
+        kvstore:
+          store: inmemory
+      storage:
+        filesystem:
+          chunks_directory: /loki/chunks
+          rules_directory: /loki/rules
+    schema_config:
+      configs:
+        - from: '2024-04-01'
+          store: tsdb
+          object_store: filesystem
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
+    limits_config:
+      retention_period: 168h
+    compactor:
+      working_directory: /loki/compactor
+      retention_enabled: true
+      delete_request_store: filesystem
+
+
+---
+# Source: platform/templates/monitoring.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: 'platform-alloy'}
+data:
+  config.alloy: |
+    local.file_match "app" {
+      path_targets = [{"__path__" = "/logs/*.log", "job" = "backend"}]
+    }
+    loki.source.file "app" {
+      targets    = local.file_match.app.targets
+      forward_to = [loki.write.local.receiver]
+    }
+    loki.write "local" {
+      endpoint { url = "http://platform-loki:3100/loki/api/v1/push" }
+    }
+
+---
+# Source: platform/templates/monitoring.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: 'platform-grafana'}
+data:
+  sources.yml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        uid: prometheus
+        type: prometheus
+        access: proxy
+        url: http://platform-prometheus:9090
+        isDefault: true
+      - name: Loki
+        uid: loki
+        type: loki
+        access: proxy
+        url: http://platform-loki:3100
+  provider.yml: |
+    apiVersion: 1
+    providers:
+      - name: homelab
+        type: file
+        options:
+          path: /etc/grafana/provisioning/dashboards
+  platform.json: |
+    {
+      "title": "Platform service",
+      "uid": "platform",
+      "schemaVersion": 40,
+      "version": 1,
+      "refresh": "10s",
+      "time": {
+        "from": "now-30m",
+        "to": "now"
+      },
+      "panels": [
+        {
+          "id": 1,
+          "title": "RPS",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 0,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "expr": "sum(rate(http_requests_total[5m]))",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "options": {}
+        },
+        {
+          "id": 2,
+          "title": "HTTP statuses",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 0,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "expr": "sum by (status) (rate(http_requests_total[5m]))",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "options": {}
+        },
+        {
+          "id": 3,
+          "title": "p50 latency",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 8,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "options": {}
+        },
+        {
+          "id": 4,
+          "title": "p95 latency",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 8,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "options": {}
+        },
+        {
+          "id": 5,
+          "title": "p99 latency",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 16,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "options": {}
+        },
+        {
+          "id": 6,
+          "title": "Process RSS",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 16,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "expr": "process_resident_memory_bytes",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "options": {}
+        },
+        {
+          "id": 7,
+          "title": "CPU cores",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 24,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "expr": "rate(process_cpu_seconds_total[5m])",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "options": {}
+        },
+        {
+          "id": 8,
+          "title": "Dependency failures",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 24,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "expr": "sum by (dependency) (rate(dependency_failures_total[5m]))",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "options": {}
+        }
+      ]
+    }
+
+---
+# Source: platform/templates/monitoring.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: 'platform-prometheus'}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: {storage: 1Gi}
+
+---
+# Source: platform/templates/monitoring.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: 'platform-alertmanager'}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: {storage: 1Gi}
+
+---
+# Source: platform/templates/monitoring.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: 'platform-loki'}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: {storage: 1Gi}
+
+---
+# Source: platform/templates/monitoring.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: 'platform-prometheus'}
+rules:
+  - apiGroups: ['']
+    resources: [services, endpoints, pods]
+    verbs: [get, list, watch]
+
+---
+# Source: platform/templates/monitoring.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: 'platform-prometheus'}
+subjects:
+  - kind: ServiceAccount
+    name: platform-prometheus
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: 'platform-prometheus'}
+
+---
+# Source: platform/templates/app.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: platform-backend
+spec:
+  selector: {app: 'platform-backend'}
+  ports: [{port: 8000, targetPort: http, name: http}]
+
+---
+# Source: platform/templates/monitoring.yaml
+apiVersion: v1
+kind: Service
+metadata: {name: 'platform-prometheus'}
+spec:
+  selector: {app: 'platform-prometheus'}
+  ports: [{port: 9090}]
+
+---
+# Source: platform/templates/monitoring.yaml
+apiVersion: v1
+kind: Service
+metadata: {name: 'platform-alertmanager'}
+spec:
+  selector: {app: 'platform-alertmanager'}
+  ports: [{port: 9093}]
+
+---
+# Source: platform/templates/monitoring.yaml
+apiVersion: v1
+kind: Service
+metadata: {name: 'platform-loki'}
+spec:
+  selector: {app: 'platform-loki'}
+  ports: [{port: 3100}]
+
+---
+# Source: platform/templates/monitoring.yaml
+apiVersion: v1
+kind: Service
+metadata: {name: 'platform-grafana'}
+spec:
+  selector: {app: 'platform-grafana'}
+  ports: [{port: 3000}]
+
+---
+# Source: platform/templates/postgres.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: platform-postgres
+spec:
+  selector: {app: 'platform-postgres'}
+  ports: [{port: 5432, name: postgres}]
+
+---
+# Source: platform/templates/redis.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: platform-redis
+spec:
+  selector: {app: 'platform-redis'}
+  ports: [{port: 6379, name: redis}]
+
+---
+# Source: platform/templates/app.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: platform-backend
+spec:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  selector:
+    matchLabels: {app: 'platform-backend'}
+  template:
+    metadata:
+      labels: {app: 'platform-backend'}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, fsGroup: 10001}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: {app: 'platform-backend'}
+      containers:
+        - name: backend
+          image: "platform-backend:local"
+          imagePullPolicy: IfNotPresent
+          ports: [{containerPort: 8000, name: http}]
+          envFrom:
+            - configMapRef: {name: 'platform-config'}
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: {name: 'platform-secrets', key: DATABASE_URL}
+            - name: LOG_DIR
+              value: /logs
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          startupProbe:
+            httpGet: {path: /live, port: http}
+            periodSeconds: 5
+            failureThreshold: 12
+          readinessProbe:
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 5
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet: {path: /live, port: http}
+            periodSeconds: 10
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: logs, mountPath: /logs}
+        - name: alloy
+          image: grafana/alloy:v1.9.1
+          args: [run, /etc/alloy/config.alloy, --storage.path=/tmp/alloy]
+          resources:
+            requests: {cpu: 25m, memory: 64Mi}
+            limits: {cpu: 200m, memory: 128Mi}
+          securityContext:
+            runAsUser: 10001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: logs, mountPath: /logs, readOnly: true}
+            - {name: alloy-config, mountPath: /etc/alloy}
+            - {name: alloy-tmp, mountPath: /tmp}
+      volumes:
+        - {name: tmp, emptyDir: {}}
+        - {name: logs, emptyDir: {}}
+        - {name: alloy-config, configMap: {name: 'platform-alloy'}}
+        - {name: alloy-tmp, emptyDir: {}}
+
+---
+# Source: platform/templates/monitoring.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: 'platform-prometheus'}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: 'platform-prometheus'}
+  template:
+    metadata:
+      labels: {app: 'platform-prometheus'}
+    spec:
+      serviceAccountName: platform-prometheus
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v3.4.1
+          args: ['--config.file=/etc/prometheus/prometheus.yml']
+          ports: [{containerPort: 9090}]
+          resources:
+            requests: {cpu: 25m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+          volumeMounts:
+            - {name: config, mountPath: /etc/prometheus}
+            - {name: data, mountPath: /prometheus}
+      volumes:
+        - {name: config, configMap: {name: 'platform-prometheus'}}
+        - {name: data, persistentVolumeClaim: {claimName: 'platform-prometheus'}}
+
+---
+# Source: platform/templates/monitoring.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: 'platform-alertmanager'}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: 'platform-alertmanager'}
+  template:
+    metadata:
+      labels: {app: 'platform-alertmanager'}
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: alertmanager
+          image: prom/alertmanager:v0.28.1
+          args: ['--config.file=/etc/alertmanager/alertmanager.yml']
+          ports: [{containerPort: 9093}]
+          resources:
+            requests: {cpu: 25m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+          volumeMounts:
+            - {name: config, mountPath: /etc/alertmanager}
+            - {name: data, mountPath: /alertmanager}
+      volumes:
+        - {name: config, configMap: {name: 'platform-alertmanager'}}
+        - {name: data, persistentVolumeClaim: {claimName: 'platform-alertmanager'}}
+
+---
+# Source: platform/templates/monitoring.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: 'platform-loki'}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: 'platform-loki'}
+  template:
+    metadata:
+      labels: {app: 'platform-loki'}
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: loki
+          image: grafana/loki:3.5.1
+          args: ['-config.file=/etc/loki/loki.yml']
+          ports: [{containerPort: 3100}]
+          resources:
+            requests: {cpu: 25m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+          volumeMounts:
+            - {name: config, mountPath: /etc/loki}
+            - {name: data, mountPath: /loki}
+      volumes:
+        - {name: config, configMap: {name: 'platform-loki'}}
+        - {name: data, persistentVolumeClaim: {claimName: 'platform-loki'}}
+
+---
+# Source: platform/templates/monitoring.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: 'platform-grafana'}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: 'platform-grafana'}
+  template:
+    metadata:
+      labels: {app: 'platform-grafana'}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {fsGroup: 472}
+      containers:
+        - name: grafana
+          image: grafana/grafana:12.0.2
+          env:
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: 'platform-secrets', key: GRAFANA_PASSWORD}
+          resources:
+            requests: {cpu: 25m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          ports: [{containerPort: 3000}]
+          volumeMounts:
+            - {name: config, mountPath: /etc/grafana/provisioning/datasources/sources.yml, subPath: sources.yml}
+            - {name: config, mountPath: /etc/grafana/provisioning/dashboards/provider.yml, subPath: provider.yml}
+            - {name: config, mountPath: /etc/grafana/provisioning/dashboards/platform.json, subPath: platform.json}
+            - {name: data, mountPath: /var/lib/grafana}
+      volumes:
+        - {name: config, configMap: {name: 'platform-grafana'}}
+        - {name: data, emptyDir: {}}
+
+---
+# Source: platform/templates/app.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: platform-backend
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: 'platform-backend'}
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: {type: Utilization, averageUtilization: 70}
+
+---
+# Source: platform/templates/postgres.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: platform-postgres
+spec:
+  serviceName: platform-postgres
+  replicas: 1
+  selector:
+    matchLabels: {app: 'platform-postgres'}
+  template:
+    metadata:
+      labels: {app: 'platform-postgres'}
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: postgres
+          image: postgres:16.9-bookworm
+          ports: [{containerPort: 5432}]
+
+          env:
+            - {name: POSTGRES_USER, value: platform}
+            - {name: POSTGRES_DB, value: platform}
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: 'platform-secrets', key: POSTGRES_PASSWORD}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          readinessProbe:
+            exec: {command: [sh, -c, "pg_isready -U platform -d platform"]}
+            periodSeconds: 5
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests: {storage: 2Gi}
+
+---
+# Source: platform/templates/redis.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: platform-redis
+spec:
+  serviceName: platform-redis
+  replicas: 1
+  selector:
+    matchLabels: {app: 'platform-redis'}
+  template:
+    metadata:
+      labels: {app: 'platform-redis'}
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: redis
+          image: redis:7.4.4-alpine
+          ports: [{containerPort: 6379}]
+
+          args: [--appendonly, "yes", --maxmemory, 64mb, --maxmemory-policy, allkeys-lru]
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          readinessProbe:
+            exec: {command: [redis-cli, ping]}
+            periodSeconds: 5
+          volumeMounts:
+            - {name: data, mountPath: /data}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests: {storage: 1Gi}
+
+---
+# Source: platform/templates/app.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: platform
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: platform.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: platform-backend
+                port: {number: 8000}

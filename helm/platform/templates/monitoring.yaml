@@ -1,0 +1,574 @@
+{{- if .Values.monitoring.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-prometheus
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+    rule_files: [/etc/prometheus/alerts.yml]
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets: ['{{ .Release.Name }}-alertmanager:9093']
+    scrape_configs:
+      - job_name: backend
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names: ['{{ .Release.Namespace }}']
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            regex: '{{ .Release.Name }}-backend'
+            action: keep
+          - source_labels: [__meta_kubernetes_endpoint_port_name]
+            regex: http
+            action: keep
+      - job_name: prometheus
+        static_configs:
+          - targets: ['localhost:9090']
+
+  alerts.yml: |
+    groups:
+      - name: platform
+        rules:
+          - alert: BackendUnavailable
+            expr: up{job="backend"} == 0
+            for: 1m
+            labels: {severity: critical}
+            annotations: {summary: Backend metrics endpoint unavailable, runbook: RUNBOOK.md}
+          - alert: BackendErrorRate
+            expr: sum(rate(http_requests_total{status=~"5.."}[5m])) / clamp_min(sum(rate(http_requests_total[5m])), 0.001) > 0.05
+            for: 2m
+            labels: {severity: warning}
+            annotations: {summary: More than five percent server errors, runbook: RUNBOOK.md}
+          - alert: BackendLatency
+            expr: histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket[5m]))) > 0.5
+            for: 2m
+            labels: {severity: warning}
+            annotations: {summary: HTTP p95 exceeds 500ms, runbook: RUNBOOK.md}
+          - alert: BackendMemory
+            expr: process_resident_memory_bytes{job="backend"} > 200 * 1024 * 1024
+            for: 5m
+            labels: {severity: warning}
+            annotations: {summary: Backend memory above lab threshold, runbook: RUNBOOK.md}
+          - alert: DependencyFailure
+            expr: sum by (dependency) (rate(dependency_failures_total[2m])) > 0
+            for: 1m
+            labels: {severity: warning}
+            annotations: {summary: Required dependency failing, runbook: RUNBOOK.md}
+
+          - alert: BackendCpuHigh
+            expr: rate(process_cpu_seconds_total{job="backend"}[2m]) > 0.45
+            for: 2m
+            labels: {severity: warning}
+            annotations: {summary: Backend near half-core CPU budget, runbook: RUNBOOK.md}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: '{{ .Release.Name }}-prometheus'}
+spec:
+  selector: {app: '{{ .Release.Name }}-prometheus'}
+  ports: [{port: 9090}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: '{{ .Release.Name }}-prometheus'}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: '{{ .Release.Name }}-prometheus'}
+  template:
+    metadata:
+      labels: {app: '{{ .Release.Name }}-prometheus'}
+    spec:
+      serviceAccountName: {{ .Release.Name }}-prometheus
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v3.4.1
+          args: ['--config.file=/etc/prometheus/prometheus.yml']
+          ports: [{containerPort: 9090}]
+          resources:
+            requests: {cpu: 25m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+          volumeMounts:
+            - {name: config, mountPath: /etc/prometheus}
+            - {name: data, mountPath: /prometheus}
+      volumes:
+        - {name: config, configMap: {name: '{{ .Release.Name }}-prometheus'}}
+        - {name: data, persistentVolumeClaim: {claimName: '{{ .Release.Name }}-prometheus'}}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: '{{ .Release.Name }}-prometheus'}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: {storage: 1Gi}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-alertmanager
+data:
+  alertmanager.yml: |
+    route:
+      receiver: local-ui
+      group_by: [alertname]
+      group_wait: 10s
+      group_interval: 1m
+      repeat_interval: 4h
+    receivers:
+      - name: local-ui
+
+---
+apiVersion: v1
+kind: Service
+metadata: {name: '{{ .Release.Name }}-alertmanager'}
+spec:
+  selector: {app: '{{ .Release.Name }}-alertmanager'}
+  ports: [{port: 9093}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: '{{ .Release.Name }}-alertmanager'}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: '{{ .Release.Name }}-alertmanager'}
+  template:
+    metadata:
+      labels: {app: '{{ .Release.Name }}-alertmanager'}
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: alertmanager
+          image: prom/alertmanager:v0.28.1
+          args: ['--config.file=/etc/alertmanager/alertmanager.yml']
+          ports: [{containerPort: 9093}]
+          resources:
+            requests: {cpu: 25m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+          volumeMounts:
+            - {name: config, mountPath: /etc/alertmanager}
+            - {name: data, mountPath: /alertmanager}
+      volumes:
+        - {name: config, configMap: {name: '{{ .Release.Name }}-alertmanager'}}
+        - {name: data, persistentVolumeClaim: {claimName: '{{ .Release.Name }}-alertmanager'}}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: '{{ .Release.Name }}-alertmanager'}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: {storage: 1Gi}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-loki
+data:
+  loki.yml: |
+    auth_enabled: false
+    server:
+      http_listen_port: 3100
+    common:
+      path_prefix: /loki
+      replication_factor: 1
+      ring:
+        kvstore:
+          store: inmemory
+      storage:
+        filesystem:
+          chunks_directory: /loki/chunks
+          rules_directory: /loki/rules
+    schema_config:
+      configs:
+        - from: '2024-04-01'
+          store: tsdb
+          object_store: filesystem
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
+    limits_config:
+      retention_period: 168h
+    compactor:
+      working_directory: /loki/compactor
+      retention_enabled: true
+      delete_request_store: filesystem
+
+---
+apiVersion: v1
+kind: Service
+metadata: {name: '{{ .Release.Name }}-loki'}
+spec:
+  selector: {app: '{{ .Release.Name }}-loki'}
+  ports: [{port: 3100}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: '{{ .Release.Name }}-loki'}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: '{{ .Release.Name }}-loki'}
+  template:
+    metadata:
+      labels: {app: '{{ .Release.Name }}-loki'}
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: loki
+          image: grafana/loki:3.5.1
+          args: ['-config.file=/etc/loki/loki.yml']
+          ports: [{containerPort: 3100}]
+          resources:
+            requests: {cpu: 25m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+          volumeMounts:
+            - {name: config, mountPath: /etc/loki}
+            - {name: data, mountPath: /loki}
+      volumes:
+        - {name: config, configMap: {name: '{{ .Release.Name }}-loki'}}
+        - {name: data, persistentVolumeClaim: {claimName: '{{ .Release.Name }}-loki'}}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: '{{ .Release.Name }}-loki'}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: {storage: 1Gi}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: '{{ .Release.Name }}-prometheus'}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: '{{ .Release.Name }}-prometheus'}
+rules:
+  - apiGroups: ['']
+    resources: [services, endpoints, pods]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: '{{ .Release.Name }}-prometheus'}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name }}-prometheus
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: '{{ .Release.Name }}-prometheus'}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: '{{ .Release.Name }}-alloy'}
+data:
+  config.alloy: |
+    local.file_match "app" {
+      path_targets = [{"__path__" = "/logs/*.log", "job" = "backend"}]
+    }
+    loki.source.file "app" {
+      targets    = local.file_match.app.targets
+      forward_to = [loki.write.local.receiver]
+    }
+    loki.write "local" {
+      endpoint { url = "http://{{ .Release.Name }}-loki:3100/loki/api/v1/push" }
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: '{{ .Release.Name }}-grafana'}
+data:
+  sources.yml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        uid: prometheus
+        type: prometheus
+        access: proxy
+        url: http://{{ .Release.Name }}-prometheus:9090
+        isDefault: true
+      - name: Loki
+        uid: loki
+        type: loki
+        access: proxy
+        url: http://{{ .Release.Name }}-loki:3100
+  provider.yml: |
+    apiVersion: 1
+    providers:
+      - name: homelab
+        type: file
+        options:
+          path: /etc/grafana/provisioning/dashboards
+  platform.json: |
+    {
+      "title": "Platform service",
+      "uid": "platform",
+      "schemaVersion": 40,
+      "version": 1,
+      "refresh": "10s",
+      "time": {
+        "from": "now-30m",
+        "to": "now"
+      },
+      "panels": [
+        {
+          "id": 1,
+          "title": "RPS",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 0,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "expr": "sum(rate(http_requests_total[5m]))",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "options": {}
+        },
+        {
+          "id": 2,
+          "title": "HTTP statuses",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 0,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "expr": "sum by (status) (rate(http_requests_total[5m]))",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "options": {}
+        },
+        {
+          "id": 3,
+          "title": "p50 latency",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 8,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "options": {}
+        },
+        {
+          "id": 4,
+          "title": "p95 latency",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 8,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "options": {}
+        },
+        {
+          "id": 5,
+          "title": "p99 latency",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 16,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "options": {}
+        },
+        {
+          "id": 6,
+          "title": "Process RSS",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 16,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "expr": "process_resident_memory_bytes",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "options": {}
+        },
+        {
+          "id": 7,
+          "title": "CPU cores",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 24,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "expr": "rate(process_cpu_seconds_total[5m])",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "options": {}
+        },
+        {
+          "id": 8,
+          "title": "Dependency failures",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 24,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "expr": "sum by (dependency) (rate(dependency_failures_total[5m]))",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "options": {}
+        }
+      ]
+    }
+---
+apiVersion: v1
+kind: Service
+metadata: {name: '{{ .Release.Name }}-grafana'}
+spec:
+  selector: {app: '{{ .Release.Name }}-grafana'}
+  ports: [{port: 3000}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: '{{ .Release.Name }}-grafana'}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: '{{ .Release.Name }}-grafana'}
+  template:
+    metadata:
+      labels: {app: '{{ .Release.Name }}-grafana'}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {fsGroup: 472}
+      containers:
+        - name: grafana
+          image: grafana/grafana:12.0.2
+          env:
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: '{{ .Values.secretName }}', key: GRAFANA_PASSWORD}
+          resources:
+            requests: {cpu: 25m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          ports: [{containerPort: 3000}]
+          volumeMounts:
+            - {name: config, mountPath: /etc/grafana/provisioning/datasources/sources.yml, subPath: sources.yml}
+            - {name: config, mountPath: /etc/grafana/provisioning/dashboards/provider.yml, subPath: provider.yml}
+            - {name: config, mountPath: /etc/grafana/provisioning/dashboards/platform.json, subPath: platform.json}
+            - {name: data, mountPath: /var/lib/grafana}
+      volumes:
+        - {name: config, configMap: {name: '{{ .Release.Name }}-grafana'}}
+        - {name: data, emptyDir: {}}
+{{- end }}

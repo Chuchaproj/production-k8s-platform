@@ -1,0 +1,88 @@
+services:
+  log-init:
+    image: alpine:3.21@sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507
+    command: [chown, '10001:10001', /logs]
+    volumes: [app-logs:/logs]
+  backend:
+    build: .
+    image: platform-backend:local
+    environment:
+      DATABASE_URL: postgresql://platform:${POSTGRES_PASSWORD:?Run make init}@postgres:5432/platform
+      REDIS_URL: redis://redis:6379/0
+      LOG_DIR: /tmp/logs
+      LAB_LATENCY_SECONDS: ${LAB_LATENCY_SECONDS:-0}
+    volumes: [app-logs:/tmp/logs]
+    depends_on:
+      log-init: {condition: service_completed_successfully}
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 30s
+    mem_limit: 256m
+    cpus: 0.5
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  postgres:
+    image: postgres:16.9-bookworm
+    environment:
+      POSTGRES_USER: platform
+      POSTGRES_DB: platform
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run make init}
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U platform -d platform']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  redis:
+    image: redis:7.4.4-alpine
+    command: [redis-server, --appendonly, 'yes', --maxmemory, 64mb, --maxmemory-policy, allkeys-lru]
+    volumes: [redis-data:/data]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  nginx:
+    image: nginx:1.28.0-alpine
+    ports: ['127.0.0.1:8280:8080']
+    volumes: ['./nginx/nginx.conf:/etc/nginx/nginx.conf:ro']
+    depends_on: [backend]
+  prometheus:
+    image: prom/prometheus:v3.4.1
+    ports: ['127.0.0.1:9090:9090']
+    command: [--config.file=/etc/prometheus/prometheus.yml, --storage.tsdb.retention.time=7d]
+    volumes: ['./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro', './monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro', './monitoring/rule-tests.yml:/etc/prometheus/rule-tests.yml:ro', 'prometheus-data:/prometheus']
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    ports: ['127.0.0.1:9093:9093']
+    volumes: ['./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro']
+  loki:
+    image: grafana/loki:3.5.1
+    command: [-config.file=/etc/loki/config.yml]
+    volumes: ['./monitoring/loki.yml:/etc/loki/config.yml:ro', 'loki-data:/loki']
+  alloy:
+    image: grafana/alloy:v1.9.1
+    command: [run, /etc/alloy/config.alloy, --storage.path=/var/lib/alloy]
+    volumes: ['./monitoring/config.alloy:/etc/alloy/config.alloy:ro', 'app-logs:/logs:ro', 'alloy-data:/var/lib/alloy']
+  grafana:
+    image: grafana/grafana:12.0.2
+    ports: ['127.0.0.1:3000:3000']
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?Run make init}
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+    volumes: ['./monitoring/grafana:/etc/grafana/provisioning:ro', 'grafana-data:/var/lib/grafana']
+volumes:
+  postgres-data: {}
+  redis-data: {}
+  app-logs: {}
+  prometheus-data: {}
+  loki-data: {}
+  alloy-data: {}
+  grafana-data: {}
