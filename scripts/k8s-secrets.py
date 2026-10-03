@@ -6,6 +6,7 @@ import secrets
 import subprocess
 
 parser = argparse.ArgumentParser()
+parser.add_argument("--context", default="kind-portfolio")
 parser.add_argument("--namespace", default="platform")
 parser.add_argument("--release", default="platform")
 args = parser.parse_args()
@@ -16,4 +17,4 @@ secret = {"apiVersion": "v1", "kind": "Secret", "type": "Opaque",
           "stringData": {"POSTGRES_PASSWORD": password, "GRAFANA_PASSWORD": grafana,
                          "DATABASE_URL": f"postgresql://platform:{password}@{args.release}-postgres:5432/platform"}}
 # Create, rather than apply: accidental regeneration must not rotate a live DB credential.
-subprocess.run(["kubectl", "create", "-f", "-"], input=json.dumps(secret), text=True, check=True)
+subprocess.run(["kubectl", "--context", args.context, "create", "-f", "-"], input=json.dumps(secret), text=True, check=True)
